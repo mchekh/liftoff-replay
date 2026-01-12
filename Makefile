@@ -1,4 +1,4 @@
-BINARY  := liftoff-replay
+BINARY  := liftoff-telemetry
 CMD     := ./cmd/$(BINARY)
 BIN     := bin
 DIST    := dist
