@@ -1,4 +1,4 @@
-package telemetry_encoder
+package telemetry
 
 import (
 	"encoding/binary"
@@ -11,15 +11,15 @@ type TelemetrySource interface {
 	NextFrame() ([]byte, error)
 }
 
-type Reader[T any] struct {
+type TelemetryRecordReader[T any] struct {
 	src     TelemetrySource
-	dec     *StructDecoder[T]
+	dec     *TelemetryEncoder[T]
 	minSize int
 
 	reuse T
 }
 
-func NewReader[T any](src TelemetrySource, schema *TelemetrySchema) (*Reader[T], error) {
+func NewReader[T any](src TelemetrySource, schema *TelemetrySchema) (*TelemetryRecordReader[T], error) {
 	if src == nil {
 		return nil, fmt.Errorf("reader: source is nil")
 	}
@@ -27,19 +27,19 @@ func NewReader[T any](src TelemetrySource, schema *TelemetrySchema) (*Reader[T],
 		return nil, fmt.Errorf("reader: schema is nil")
 	}
 
-	dec, err := NewStructDecoder[T](schema, binary.LittleEndian, true)
+	dec, err := NewTelemetryEncoder[T](schema, binary.LittleEndian, true)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Reader[T]{
+	return &TelemetryRecordReader[T]{
 		src:     src,
 		dec:     dec,
 		minSize: schema.Size(),
 	}, nil
 }
 
-func (r *Reader[T]) NextInto(dst *T) error {
+func (r *TelemetryRecordReader[T]) NextInto(dst *T) error {
 	if dst == nil {
 		return fmt.Errorf("reader: dst is nil")
 	}
@@ -59,7 +59,7 @@ func (r *Reader[T]) NextInto(dst *T) error {
 	return r.dec.DecodeInto(frame, dst)
 }
 
-func (r *Reader[T]) Next() (T, error) {
+func (r *TelemetryRecordReader[T]) Next() (T, error) {
 	var zero T
 
 	if err := r.NextInto(&r.reuse); err != nil {

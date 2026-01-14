@@ -1,9 +1,7 @@
 package telemetry
 
 import (
-	"encoding/binary"
 	"fmt"
-	"math"
 	"strings"
 )
 
@@ -52,9 +50,14 @@ var compositeFields = map[string][]string{
 	"MotorRPM": {"MotorRPMCount", "MotorRPM_LF", "MotorRPM_RF", "MotorRPM_LB", "MotorRPM_RB"},
 }
 
+type FieldInstance struct {
+	Desc   FieldDescriptor
+	Offset int
+}
+
 type TelemetrySchema struct {
 	fields []FieldInstance
-	byName map[string]int
+	byKey  map[string]int
 	size   int
 }
 
@@ -92,24 +95,26 @@ func SchemaFromStreamFormat(streamFormat []string) (*TelemetrySchema, error) {
 
 	s := &TelemetrySchema{
 		fields: make([]FieldInstance, 0, len(expanded)),
-		byName: make(map[string]int, len(expanded)),
+		byKey:  make(map[string]int, len(expanded)*2),
 	}
 
 	offset := 0
 	for _, d := range expanded {
-		if _, dup := s.byName[d.Name]; dup {
-			return nil, fmt.Errorf("duplicate field in schema: %q", d.Name)
-		}
 		n, ok := d.Size()
 		if !ok {
-			return nil, fmt.Errorf("unknown size for field %q", d.Name)
+			return nil, fmt.Errorf("unknown size for field %q (type %v)", d.Name, d.Type)
 		}
 
-		s.byName[d.Name] = len(s.fields)
-		s.fields = append(s.fields, FieldInstance{
-			Desc:   d,
-			Offset: offset,
-		})
+		if _, dup := s.byKey[d.Name]; dup {
+			return nil, fmt.Errorf("duplicate field in schema: %q", d.Name)
+		}
+
+		idx := len(s.fields)
+		fi := FieldInstance{Desc: d, Offset: offset}
+		s.fields = append(s.fields, fi)
+
+		s.byKey[d.Name] = idx
+
 		offset += n
 	}
 
@@ -119,36 +124,14 @@ func SchemaFromStreamFormat(streamFormat []string) (*TelemetrySchema, error) {
 
 func (s *TelemetrySchema) Size() int { return s.size }
 
-func (s *TelemetrySchema) HasField(name string) bool {
-	_, ok := s.byName[name]
-	return ok
+func (s *TelemetrySchema) Fields() []FieldInstance {
+	return s.fields
 }
 
-func (s *TelemetrySchema) Field(name string) (FieldInstance, bool) {
-	i, ok := s.byName[name]
+func (s *TelemetrySchema) Field(key string) (FieldInstance, bool) {
+	i, ok := s.byKey[key]
 	if !ok {
 		return FieldInstance{}, false
 	}
 	return s.fields[i], true
-}
-
-func (s *TelemetrySchema) Fields() []FieldInstance {
-	out := make([]FieldInstance, len(s.fields))
-	copy(out, s.fields)
-	return out
-}
-
-func (s *TelemetrySchema) GetF32(fi FieldInstance, frame []byte) (float32, error) {
-	if fi.Desc.Type != PrimFloat32 {
-		return 0, fmt.Errorf("field %q is %v, expected float32",
-			fi.Desc.Name, fi.Desc.Type)
-	}
-
-	off := fi.Offset
-	if off+4 > len(frame) {
-		return 0, fmt.Errorf("frame too short for field %q", fi.Desc.Name)
-	}
-
-	u := binary.LittleEndian.Uint32(frame[off : off+4])
-	return math.Float32frombits(u), nil
 }

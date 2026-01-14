@@ -1,78 +1,89 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
 
-	"github.com/mchekh/liftoff-replay/liftoffreplay"
-	telemetry "github.com/mchekh/liftoff-replay/liftofftelemetry"
-	telemetry_encoder "github.com/mchekh/liftoff-replay/liftofftelemetry/encoder"
+	"github.com/mchekh/liftoff-replay/encode/csv"
+	"github.com/mchekh/liftoff-replay/source"
+	"github.com/mchekh/liftoff-replay/source/replay"
+	"github.com/mchekh/liftoff-replay/source/udp"
+	"github.com/mchekh/liftoff-replay/telemetry"
 )
 
-type Temp struct {
-	r io.Reader
-}
-
-func (t *Temp) Read(p []byte) (n int, err error) {
-	return t.r.Read(p)
-}
-
-func (t *Temp) Close() (err error) {
-	return nil
-}
-
 func main() {
-	var (
-		format = flag.String("format", "csv", "Output format: csv | json | ndjson")
-		// outPath = flag.String("out", "", "Output file (default: stdout)")
-		nested = flag.Bool("nested", false, "Use nested JSON structure (position/orientation/controls)")
-	)
+	os.Exit(run(os.Args[1:]))
+}
 
-	flag.Usage = func() {
-		fmt.Fprintf(
-			flag.CommandLine.Output(),
-			"Usage:\n  %s [--format csv|json|ndjson] [--out <file>] [--nested] <input.xml>\n\nOptions:\n",
-			os.Args[0],
-		)
-		flag.PrintDefaults()
+func run(args []string) int {
+	if len(args) == 0 {
+		printUsage(os.Stderr)
+		return 2
 	}
 
-	flag.Parse()
-
-	if flag.NArg() != 1 {
-		flag.Usage()
-		os.Exit(2)
+	switch args[0] {
+	case "parse-replay":
+		return cmdParseReplay(args[1:])
+	case "listen":
+		return cmdListen(args[1:])
+	case "-h", "--help", "help":
+		printUsage(os.Stdout)
+		return 0
+	default:
+		fmt.Fprintln(os.Stderr, "unknown command:", args[0])
+		printUsage(os.Stderr)
+		return 2
 	}
+}
 
-	if *nested && *format == "csv" {
-		fmt.Fprintln(os.Stderr, "error: --nested is not supported for csv format")
-		os.Exit(2)
+func printUsage(w io.Writer) {
+	fmt.Fprintf(w, `liftlm - Liftoff telemetry tool
+
+Usage:
+  liftlm parse-replay <replay.xml> --format csv --out output.csv
+  liftlm listen --config ./TelemetryConfiguration.json --format csv --out stream.csv
+
+Commands:
+  parse-replay   Parse a Liftoff replay XML and convert telemetry to chosen format
+  listen         Listen for UDP telemetry stream using TelemetryConfiguration.json
+
+Flags:
+  --format   Output format (csv for now).
+  --out      Output file path. If omitted or "-", writes to stdout.
+
+Examples:
+  liftlm parse-replay ./replay.xml --format csv --out output.csv
+  liftlm listen --config ./TelemetryConfiguration.json --format csv --out stream.csv
+`)
+}
+
+func cmdParseReplay(args []string) int {
+	fs := flag.NewFlagSet("parse-replay", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	format := fs.String("format", "csv", "output format (csv)")
+	outPath := fs.String("out", "", "output file path (default: stdout)")
+
+	if err := fs.Parse(args); err != nil {
+		return 2
 	}
-
-	inPath := flag.Arg(0)
-	in, err := os.Open(inPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: open input %q: %v\n", inPath, err)
-		os.Exit(1)
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "parse-replay requires <replay.xml>")
+		return 2
 	}
-	defer in.Close()
+	replayPath := fs.Arg(0)
 
-	// _out, closer, err := getOutWriter(*outPath)
-	// if err != nil {
-	// 	fmt.Fprintln(os.Stderr, "error:", err)
-	// 	os.Exit(1)
-	// }
-	// if closer != nil {
-	// 	defer func() {
-	// 		if err := closer.Close(); err != nil {
-	// 			fmt.Fprintf(os.Stderr, "warning: close output %q: %v\n", *outPath, err)
-	// 		}
-	// 	}()
-	// }
-
-	schema, err := telemetry_encoder.SchemaFromStreamFormat([]string{
+	schema, err := telemetry.SchemaFromStreamFormat([]string{
 		"Position",
 		"Attitude",
 		"Input",
@@ -80,69 +91,167 @@ func main() {
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		return 1
 	}
 
-	decoded, err := liftoffreplay.ExtractReplayBinaryData(in)
+	src, err := replay.ReplayTelemetrySourceFromFile(replayPath, schema.Size())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		return 1
 	}
+	defer func() { _ = src.Close() }()
 
-	src := telemetry.NewFileTelemetrySource(&Temp{r: decoded}, schema.Size())
-
-	reader, err := telemetry_encoder.NewReader[TestData](src, schema)
-
+	out, closeOut, err := openOut(*outPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		return 1
 	}
-	for {
-		rec, err := reader.Next()
-		if err != nil {
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "error:", err)
-				os.Exit(1)
-			}
-		}
-		fmt.Printf("\n%v\n", *rec.Timestapm)
-	}
+	defer closeOut()
 
-	// enc:= telemetry.NewCSVEncoder(schema, out)
-
-	// err = enc.EncodeAll(src)
-	//
-	// if err != nil {
-	// 	fmt.Fprintln(os.Stderr, "error:", err)
-	// 	os.Exit(1)
-	// }
-}
-
-type TestData struct {
-	Timestapm *float32 `telemetry:"Timestamp"`
-	PositionX float32  `telemetry:"PositionX"`
-	Something float32  `telemetry:"asdfsad fsdf "`
-}
-
-func getOutWriter(outPath string) (io.Writer, io.Closer, error) {
-	if outPath == "" {
-		return os.Stdout, nil, nil
-	}
-	f, err := os.Create(outPath)
+	enc, err := newEncoder(*format, schema, out)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create output %q: %w", outPath, err)
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
 	}
-	return f, f, nil
+
+	if err := enc.EncodeAll(src); err != nil && !errors.Is(err, io.EOF) {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	return 0
 }
 
-func getEncodingStrategy[T liftoffreplay.ReplayRecordConstraint](
-	format string,
-	encoders []liftoffreplay.RecordEncoder[T],
-) (liftoffreplay.RecordEncoder[T], error) {
-	for _, enc := range encoders {
-		if enc.Format() == format {
-			return enc, nil
+func cmdListen(args []string) int {
+	fs := flag.NewFlagSet("listen", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	cfgPath := fs.String("config", "", "path to TelemetryConfiguration.json")
+	format := fs.String("format", "csv", "output format (csv)")
+	outPath := fs.String("out", "", "output file path (default: stdout)")
+
+	queue := fs.Int("queue", 256, "internal frame queue size (drop when full)")
+	readBuf := fs.Int("read-buf", 0, "OS UDP receive buffer (bytes), 0 = don't set")
+
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *cfgPath == "" {
+		fmt.Fprintln(os.Stderr, "listen requires --config <TelemetryConfiguration.json>")
+		return 2
+	}
+
+	cfg, err := readTelemetryConfig(*cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+
+	schema, err := telemetry.SchemaFromStreamFormat(cfg.StreamFormat)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	src, err := udp.NewUdpTelemetrySource(udp.UDPConfig{
+		Addr:            cfg.EndPoint,
+		MaxDatagramSize: schema.Size(),
+		QueueSize:       *queue,
+		ReadBufferBytes: *readBuf,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	defer func() { _ = src.Close() }()
+
+	go func() {
+		<-ctx.Done()
+		_ = src.Close()
+	}()
+
+	out, closeOut, err := openOut(*outPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	defer closeOut()
+
+	enc, err := newEncoder(*format, schema, out)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+
+	if err := enc.EncodeAll(src); err != nil && !errors.Is(err, io.EOF) {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+
+	return 0
+}
+
+type telemetryConfig struct {
+	EndPoint     string   `json:"EndPoint"`
+	StreamFormat []string `json:"StreamFormat"`
+}
+
+func readTelemetryConfig(path string) (telemetryConfig, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return telemetryConfig{}, err
+	}
+
+	var cfg telemetryConfig
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return telemetryConfig{}, err
+	}
+
+	cfg.EndPoint = strings.TrimSpace(cfg.EndPoint)
+	if cfg.EndPoint == "" {
+		return telemetryConfig{}, errors.New("config: EndPoint is required")
+	}
+	if len(cfg.StreamFormat) == 0 {
+		return telemetryConfig{}, errors.New("config: StreamFormat must be non-empty")
+	}
+
+	if _, err := net.ResolveUDPAddr("udp", cfg.EndPoint); err != nil {
+		return telemetryConfig{}, fmt.Errorf("config: invalid EndPoint %q: %w", cfg.EndPoint, err)
+	}
+
+	return cfg, nil
+}
+
+func openOut(path string) (io.Writer, func() error, error) {
+	if path == "" || path == "-" {
+		return os.Stdout, func() error { return nil }, nil
+	}
+
+	dir := filepath.Dir(path)
+	if dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, nil, err
 		}
 	}
-	return nil, fmt.Errorf("unknown format %q (expected csv|json|ndjson)", format)
+
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return f, f.Close, nil
+}
+
+type encoder interface {
+	EncodeAll(src source.TelemetrySource) error
+}
+
+func newEncoder(format string, schema *telemetry.TelemetrySchema, out io.Writer) (encoder, error) {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "csv":
+		return csv.NewCSVEncoder(schema, out)
+	default:
+		return nil, fmt.Errorf("unsupported format: %s", format)
+	}
 }

@@ -1,4 +1,4 @@
-package telemetry_encoder
+package telemetry
 
 type Primitive uint8
 

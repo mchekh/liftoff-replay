@@ -1,4 +1,4 @@
-package telemetry_encoder
+package telemetry
 
 import (
 	"encoding/binary"
@@ -8,9 +8,11 @@ import (
 	"strings"
 )
 
-type StructDecoder[T any] struct {
+type TelemetryEncoder[T any] struct {
 	order binary.ByteOrder
 	binds []bind
+
+	recordSize int
 }
 
 type bind struct {
@@ -23,7 +25,7 @@ type bind struct {
 	size      int
 }
 
-func NewStructDecoder[T any](schema *TelemetrySchema, order binary.ByteOrder, allowOptional bool) (*StructDecoder[T], error) {
+func NewTelemetryEncoder[T any](schema *TelemetrySchema, order binary.ByteOrder, allowOptional bool) (*TelemetryEncoder[T], error) {
 	if schema == nil {
 		return nil, fmt.Errorf("decoder: schema is nil")
 	}
@@ -84,10 +86,14 @@ func NewStructDecoder[T any](schema *TelemetrySchema, order binary.ByteOrder, al
 		})
 	}
 
-	return &StructDecoder[T]{order: order, binds: binds}, nil
+	return &TelemetryEncoder[T]{order: order, binds: binds, recordSize: schema.Size()}, nil
 }
 
-func (d *StructDecoder[T]) DecodeInto(buf []byte, out *T) error {
+func (d *TelemetryEncoder[T]) RecordSize() int {
+	return d.recordSize
+}
+
+func (d *TelemetryEncoder[T]) DecodeInto(buf []byte, out *T) error {
 	if out == nil {
 		return fmt.Errorf("decoder: out is nil")
 	}
@@ -125,7 +131,7 @@ func (d *StructDecoder[T]) DecodeInto(buf []byte, out *T) error {
 	return nil
 }
 
-func (d *StructDecoder[T]) Decode(buf []byte) (T, error) {
+func (d *TelemetryEncoder[T]) Decode(buf []byte) (T, error) {
 	var out T
 	if err := d.DecodeInto(buf, &out); err != nil {
 		return out, err
