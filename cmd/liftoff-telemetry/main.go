@@ -14,11 +14,11 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/mchekh/liftoff-replay/encode/csv"
-	"github.com/mchekh/liftoff-replay/source"
-	"github.com/mchekh/liftoff-replay/source/replay"
-	"github.com/mchekh/liftoff-replay/source/udp"
-	"github.com/mchekh/liftoff-replay/telemetry"
+	"github.com/mchekh/liftoff-telemetry/encode/csv"
+	"github.com/mchekh/liftoff-telemetry/source"
+	"github.com/mchekh/liftoff-telemetry/source/replay"
+	"github.com/mchekh/liftoff-telemetry/source/udp"
+	"github.com/mchekh/liftoff-telemetry/telemetry"
 )
 
 func main() {

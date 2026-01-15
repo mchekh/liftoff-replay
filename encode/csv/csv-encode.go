@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mchekh/liftoff-replay/source"
-	"github.com/mchekh/liftoff-replay/telemetry"
+	"github.com/mchekh/liftoff-telemetry/source"
+	"github.com/mchekh/liftoff-telemetry/telemetry"
 )
 
 type csvTelemetryRecord struct {
