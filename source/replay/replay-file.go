@@ -1,4 +1,4 @@
-package liftoffreplay
+package replay
 
 import (
 	"encoding/base64"
