@@ -47,23 +47,38 @@ func run(args []string) int {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintf(w, `liftlm - Liftoff telemetry tool
+	fmt.Fprintf(w, `liftoff-telemetry — Liftoff telemetry processing tool
 
 Usage:
-  liftlm parse-replay <replay.xml> --format csv --out output.csv
-  liftlm listen --config ./TelemetryConfiguration.json --format csv --out stream.csv
+  liftoff-telemetry <command> [flags] [args]
 
 Commands:
-  parse-replay   Parse a Liftoff replay XML and convert telemetry to chosen format
-  listen         Listen for UDP telemetry stream using TelemetryConfiguration.json
+  parse-replay   Convert a Liftoff replay XML file to telemetry records
+  listen         Listen for a UDP telemetry stream using a configuration file
+
+parse-replay:
+  liftoff-telemetry parse-replay [--format csv] [--out FILE|-] <replay.xml>
+
+listen:
+  liftoff-telemetry listen --config <TelemetryConfiguration.json> [--format csv] [--out FILE|-]
+                             [--queue N] [--read-buf BYTES]
 
 Flags:
-  --format   Output format (csv for now).
-  --out      Output file path. If omitted or "-", writes to stdout.
+  --format   Output format (csv for now)
+  --out      Output file path; "-" or empty means stdout
+  --config   Path to TelemetryConfiguration.json (listen only)
+  --queue    Internal frame queue size (listen only)
+  --read-buf OS UDP receive buffer size in bytes (listen only)
+
+Notes:
+  • Flags must appear before positional arguments.
+  • parse-replay reads a replay XML file and writes telemetry records.
+  • listen runs until interrupted (Ctrl+C).
 
 Examples:
-  liftlm parse-replay ./replay.xml --format csv --out output.csv
-  liftlm listen --config ./TelemetryConfiguration.json --format csv --out stream.csv
+  liftoff-telemetry parse-replay --format csv --out output.csv ./replay.xml
+  liftoff-telemetry parse-replay ./replay.xml
+  liftoff-telemetry listen --config ./TelemetryConfiguration.json --out stream.csv
 `)
 }
 

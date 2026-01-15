@@ -1,28 +1,33 @@
-BINARY  := liftoff-telemetry
-CMD     := ./cmd/$(BINARY)
-BIN     := bin
-DIST    := dist
+BIN      := bin
+DIST     := dist
+CMDS     := $(notdir $(wildcard cmd/*))
 
-.PHONY: build run test build-all clean
+GO       := go
+CGO      := 0
+
+.PHONY: build run test clean build-all
 
 build:
 	mkdir -p $(BIN)
-	CGO_ENABLED=0 go build -o $(BIN)/$(BINARY) $(CMD)
+	@for cmd in $(CMDS); do \
+		echo "Building $$cmd"; \
+		CGO_ENABLED=$(CGO) $(GO) build -o $(BIN)/$$cmd ./cmd/$$cmd; \
+	done
 
 run:
-	go run $(CMD)
+	$(GO) run ./cmd/liftoff-telemetry
 
 test:
-	go test ./...
+	$(GO) test ./...
 
 build-all:
 	mkdir -p $(DIST)
-	CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o $(DIST)/$(BINARY)-linux-amd64        $(CMD)
-	CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -o $(DIST)/$(BINARY)-linux-arm64        $(CMD)
-	CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -o $(DIST)/$(BINARY)-darwin-amd64       $(CMD)
-	CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -o $(DIST)/$(BINARY)-darwin-arm64       $(CMD)
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o $(DIST)/$(BINARY)-windows-amd64.exe  $(CMD)
+	@for cmd in $(CMDS); do \
+		echo "Cross-building $$cmd"; \
+		CGO_ENABLED=$(CGO) GOOS=linux   GOARCH=amd64 $(GO) build -o $(DIST)/$$cmd-linux-amd64        ./cmd/$$cmd; \
+		CGO_ENABLED=$(CGO) GOOS=darwin  GOARCH=amd64 $(GO) build -o $(DIST)/$$cmd-darwin-amd64       ./cmd/$$cmd; \
+		CGO_ENABLED=$(CGO) GOOS=windows GOARCH=amd64 $(GO) build -o $(DIST)/$$cmd-windows-amd64.exe  ./cmd/$$cmd; \
+	done
 
 clean:
 	rm -rf $(BIN) $(DIST)
-
